@@ -77,20 +77,23 @@ def PCA_analysis(train):
     train_csr = csr_matrix((train['transaction'], (train['sender'], train['receiver'])),
                            shape = shape)
 
-    svd = TruncatedSVD(n_components=3)
+    svd = TruncatedSVD(n_components=2)
     X = svd.fit_transform(train_csr)
-    print X
-    print(svd.explained_variance_ratio_) 
+    # print X
+    # print(svd.explained_variance_ratio_) 
 
     shape = (train['receiver'].max() + 1, train['sender'].max() + 1)
 
     train_csr = csr_matrix((train['transaction'], (train['receiver'], train['sender'])),
                            shape = shape)
 
-    svd = TruncatedSVD(n_components=3)
+    svd = TruncatedSVD(n_components=2)
     X = svd.fit_transform(train_csr)
-    print X
-    print(svd.explained_variance_ratio_) 
+    # print X
+    # print(svd.explained_variance_ratio_) 
+
+    plt.scatter(X[:, 0], X[:, 1])
+    plt.show()
     
 if __name__ == "__main__":
     train = get_train_data("txTripletsCounts.txt")
