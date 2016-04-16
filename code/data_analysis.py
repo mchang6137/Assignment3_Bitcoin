@@ -1,15 +1,31 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import random
+import nimfa
 
+import random
+from subprocess import call
 from sklearn.decomposition import *
+from sklearn.metrics import *
 from scipy.sparse import csr_matrix
+
+import sklearn.ensemble
+import sklearn.discriminant_analysis
+import sklearn.tree
+
+
+c_dict = { 'random_forest' : (sklearn.ensemble, "RandomForestClassifier"),
+           'QDA' : (sklearn.discriminant_analysis, "QuadraticDiscriminantAnalysis"),
+           'DT' : (sklearn.tree, "DecisionTreeClassifier"),
+         }
 
 DATA_PATH = "../data/%s"
 
+###################################
+#######         data        #######
+###################################
 
-def get_train_data(fname):
+def get_data(fname):
     return pd.read_csv(DATA_PATH % fname,
                       header=None,
                       index_col=None,
@@ -17,12 +33,132 @@ def get_train_data(fname):
                       names=['sender','receiver','transaction'])
 
 
+def get_zero_sample(train):
+
+    send_max = train[:, 0].max()
+    recv_max = train[:, 1].max() 
+
+    train_size = train.shape[0]
+    
+    zero_samples = np.ndarray(shape = train.shape)
+    ind = 0
+    while ind < 2:
+        s = random.randint(0, send_max)
+        r = random.randint(0, recv_max)
+        if ((not np.logical_and.reduce([zero_samples[:, 0] == s, zero_samples[:, 1] == r]).any())
+            and (not np.logical_and.reduce([train[:, 0] == s, train[:, 1] == r]).any() )):
+            zero_samples[ind] = (s, r, 0)
+            ind += 1
+            print "%d %d 0" % (s, r)
+
+
+def sample(X, frac):
+    length = X.shape[0]
+    cnt = int(frac * length)
+    inds = np.array(random.sample(range(length), cnt))
+    return X[inds]
+
+###################################
+#######         MF          #######
+###################################
+
+def MF_predict(P, Q, test, threshold = None):
+    Yres = np.array([np.dot( P[row['sender'],:], Q[:,row['receiver']])  for index,row in test.iterrows()])
+
+    if not threshold is None:
+        Yres[Yres > threshold] = 1
+        Yres[Yres < 1] = 0
+
+    return Yres
+
+# 0.000001
+def TSVD(train, K):
+    shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
+
+    train_csr = csr_matrix((train['transaction'], (train['sender'], train['receiver'])),
+                           shape = shape)
+
+    svd = TruncatedSVD(n_components = K)
+    P = svd.fit_transform(train_csr)
+    Q = svd.components_
+    return (P, Q)
+
+# 0.00001
+def NNegMF(train, K):
+    shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
+
+    train_csr = csr_matrix((train['transaction'], (train['sender'], train['receiver'])),
+                           shape = shape)
+
+    mf = NMF(n_components = K)
+    P = mf.fit_transform(train_csr)
+    Q = mf.components_
+
+    return (P, Q)
+
+def ProbMF(train, K, frac = 0.5):
+    shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
+
+    train = sample(train.as_matrix(), frac)
+    
+    train_csr = csr_matrix((train[:, 2], (train[:, 0], train[:, 1])),
+                           shape = shape)
+
+    mf = nimfa.Pmf(train_csr)
+    P = mf.factorize()
+    print P
+    # Q = mf.components_
+
+    # Yres = np.array([np.dot( P[row['sender'],:], Q[:,row['receiver']])  for index,row in test.iterrows()])
+    # YTest = test.as_matrix()[:, 2]
+
+    # evaluate(YTest, Yres)
+
+def PF(train, K):
+    n = train['sender'].max() + 1
+    m = train['receiver'].max() + 1
+
+    # call('hgaprec -n %d -m %d -k %d -dir %s/Pdata' % (n, m, K, DATA_PATH), shell = True)
+
+    # hgaprec -n 444075 -m 444065 -k 2 -dir ../data/Pdata
+
+    res_temp = "./n%d-m%d-k%d-batch-vb/%s"
+
+    P = np.loadtxt(res_temp % (n, m, K, "byusers.tsv"))[:, 1:]
+    P = P[np.argsort(P[:,0])][:, 1:]
+
+    Q = np.loadtxt(res_temp % (n, m, K, "byitems.tsv"))[:, 1:]
+    Q = Q[np.argsort(Q[:,0])][:, 1:]
+
+    return (P, Q)
+
+def HPF(train, K):
+    # n = train['sender'].max() + 1
+    # m = train['receiver'].max() + 1
+
+    # call('hgaprec -hier -m %d -n %d -k %d -dir %s/Pdata' % (m, n, K, DATA_PATH), shell = True)
+
+    # hgaprec -hier -n 444075 -m 444065 -k 2 -dir ../data/Pdata
+
+    res_temp = "./n%d-m%d-k%d-batch-hier-vb/%s" % (n, m, K)
+
+    P = np.loadtxt(res_temp % "byusers.tsv")[:, 1:]
+    P = P[np.argsort(P[:,0])][:, 1:]
+
+    Q = np.loadtxt(res_temp % "byitems.tsv")[:, 1:]
+    Q = Q[np.argsort(Q[:,0])][:, 1:]
+
+    return (P, Q)
+
+###################################
+#######      analysis       #######
+###################################
+
 def get_aggr(X, key, val, frac):
     grouped = X[[key, val]].groupby(key).sum()
     grouped = grouped.sample(frac = frac)
-    # plt.hist(grouped[val].values, 100)
-    # plt.show()
-    return grouped
+    plt.hist(grouped[val].values, 100)
+    plt.show()
 
 def send_vs_receive_stat(X):
     senders =  X["sender"].unique()
@@ -49,52 +185,118 @@ def send_vs_receive_stat(X):
     recvs = merged['receives'].as_matrix()
     print "send/receive correlation :", np.corrcoef(sends, recvs)[0, 1]
 
-    # for K in range(50, 2000, 100):
-    #     topk_recv = grouped_recv.head(K)
-    #     topk_send = grouped_send.head(K)    
+    print "intersection of top K senders and receivers"
+    for K in range(50, 2000, 100):
+        topk_recv = grouped_recv.head(K)
+        topk_send = grouped_send.head(K)    
             
-    #     intersect = np.intersect1d(topk_send["id"].as_matrix(), topk_recv["id"].as_matrix())
-    #     print K, ":", ("%0.2f" % (len(intersect) / float(K)))
+        intersect = np.intersect1d(topk_send["id"].as_matrix(), topk_recv["id"].as_matrix())
+        print K, ":", ("%0.2f" % (len(intersect) / float(K)))
 
-    # K = 100
-    # topk_recv = grouped_recv.head(K)    
-    # joined = pd.merge(topk_recv, grouped_send, left_on = "id", right_on = "id")
+    # plotting top K senders (receivers) and their corresponding
+    # receives (sends).
+
+    K = 100
+    topk_recv = grouped_recv.head(K)    
+    joined = pd.merge(topk_recv, grouped_send, left_on = "id", right_on = "id")
     
-    # plt.plot(joined["receives"].values, "r-")
-    # plt.plot(joined["sends"].values, "b-")
+    plt.plot(joined["receives"].values, "r-")
+    plt.plot(joined["sends"].values, "b-")
 
-    # topk_send = grouped_send.head(K)
-    # joined = pd.merge(topk_send, grouped_recv, left_on = "id", right_on = "id")
+    topk_send = grouped_send.head(K)
+    joined = pd.merge(topk_send, grouped_recv, left_on = "id", right_on = "id")
     
-    # plt.plot(joined["receives"].values, "g-")
-    # plt.plot(joined["sends"].values, "y-")
+    plt.plot(joined["receives"].values, "g-")
+    plt.plot(joined["sends"].values, "y-")
 
+    plt.show()
+
+def feature_analysis(train, mf):
+    # TODO: create graphs
+    (P, Q) = mf(train, 2)
+
+    
+
+###################################
+#######      classify       #######
+###################################
+
+def select(selector_info, **kwargs):
+    (module, selector) = selector_info
+    sel = getattr(module, selector)
+    s = sel(**kwargs)
+    return s
+
+def classify(train, zeros, test, mf, K1, K2, 
+             classifier_info, **kwargs):
+
+    (P, Q) = mf(train, max(K1, K2))
+    Q = Q.T
+
+    sender = P[:, 0 : (K1 + 1)]
+    recv = Q[:, 0 : (K2 + 1)]
+
+    train = train.as_matrix()
+    zeros = zeros.as_matrix()
+    test = test.as_matrix()
+
+    train = np.concatenate((train, zeros), axis = 0)
+
+    sender_ids = sender[train[:, 0]]
+    recv_ids = recv[train[:, 1]]
+
+    X = np.append(sender_ids, recv_ids, 1)
+    Y = train[:, 2]
+    Y[Y > 0] = 1
+    
+    # QDA
+    predictor = select(classifier_info, **kwargs)
+    predictor = predictor.fit(X, Y)
+
+    XTest = np.append(sender[test[:, 0]], recv[test[:, 1]], 1)
+    
+    Yres = predictor.predict(XTest)
+
+    return Yres
+
+###################################
+#######      evaluate       #######
+###################################
+
+def evaluate(test, Yres):
+    YTest = test.as_matrix()[:, 2]
+
+    (fpr, tpr, _) = roc_curve(YTest, Yres)
+    area = auc(fpr, tpr)
+    precision_macro = precision_score(YTest, Yres, average="binary")
+    recall_macro = recall_score(YTest, Yres, average="binary")
+
+    print area, precision_macro, recall_macro
+
+    # plt.plot(fpr, tpr)
+    # plt.plot(fpr, fpr)
     # plt.show()
 
-def PCA_analysis(train):
-    shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
 
-    train_csr = csr_matrix((train['transaction'], (train['sender'], train['receiver'])),
-                           shape = shape)
 
-    svd = TruncatedSVD(n_components=2)
-    X = svd.fit_transform(train_csr)
-    # print X
-    # print(svd.explained_variance_ratio_) 
-
-    shape = (train['receiver'].max() + 1, train['sender'].max() + 1)
-
-    train_csr = csr_matrix((train['transaction'], (train['receiver'], train['sender'])),
-                           shape = shape)
-
-    svd = TruncatedSVD(n_components=2)
-    X = svd.fit_transform(train_csr)
-    # print X
-    # print(svd.explained_variance_ratio_) 
-
-    plt.scatter(X[:, 0], X[:, 1])
-    plt.show()
-    
 if __name__ == "__main__":
-    train = get_train_data("txTripletsCounts.txt")
-    PCA_analysis(train)
+    train = get_data("txTripletsCounts.txt")
+    test = get_data("testTriplets.txt")
+
+
+    ### Classify ###
+    zeros = get_data("zeros.txt")
+    Yres = classify(train, zeros, test, TSVD, 20, 20, c_dict['QDA'])
+    evaluate(test, Yres)
+
+    ### Bare Matrix Factorizaion ###
+
+    # P, Q = TSVD(train, 4)
+    # P, Q = NNegMF(train, 6)
+    # ProbMF(train, 2)
+    # P, Q = PF(train, 2)
+    # P, Q = HPF(train, 2)
+
+    # Yres = MF_predict(P, Q, test, threshold = 0.00001)
+    # evaluate(test, Yres)
+    
