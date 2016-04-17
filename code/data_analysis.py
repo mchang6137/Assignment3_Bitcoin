@@ -32,6 +32,22 @@ def get_data(fname):
                       sep=' ',
                       names=['sender','receiver','transaction'])
 
+def get_block_data(fname='blockstate.txt'):
+    line_count = 0
+    address_block_map = {}
+    current_address = 0
+
+    with open(fname) as f:
+        content = f.readlines()
+        for line in content:
+            if line_count % 2 == 0:
+                current_address = int(line.strip('\n'))
+            else:
+                address_block_map[current_address] = int(line.strip('\n'))
+            line_count += 1
+
+    return address_block_map
+
 
 def get_zero_sample(train):
 
@@ -227,8 +243,10 @@ def select(selector_info, **kwargs):
     s = sel(**kwargs)
     return s
 
-def classify(train, zeros, test, mf, K1, K2, 
+def classify(train, zeros, shortest_path_train, shortest_path_test, test, mf, K1, K2, 
              classifier_info, **kwargs):
+
+    blockstate = get_block_data()
 
     (P, Q) = mf(train, max(K1, K2))
     Q = Q.T
@@ -237,15 +255,44 @@ def classify(train, zeros, test, mf, K1, K2,
     recv = Q[:, 0 : (K2 + 1)]
 
     train = train.as_matrix()
+    nonzero_trainsize = train.shape[0]
     zeros = zeros.as_matrix()
+    zero_trainsize = zeros.shape[0]
     test = test.as_matrix()
+    shortest_path_train = shortest_path_train.as_matrix()
+    shortest_path_test = shortest_path_test.as_matrix()
+    shortest_path_test_size = shortest_path_test.shape[0]
 
     train = np.concatenate((train, zeros), axis = 0)
-
+    
     sender_ids = sender[train[:, 0]]
     recv_ids = recv[train[:, 1]]
+    
+    sender_blockstates = []
+    for address in train[:,0]:
+        sender_blockstates.append(blockstate[address])
+    receiver_blockstates = []
+    for address in train[:,1]:
+        receiver_blockstates.append(blockstate[address])
+
+    sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
+    recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
 
     X = np.append(sender_ids, recv_ids, 1)
+    
+    train_shortest_path_list = []
+    #Iterate through the 1 training set and assign the shortest path to 0
+    for index in range(0, nonzero_trainsize):
+        train_shortest_path_list.append(0)
+    for index in range(0, zero_trainsize):
+        train_shortest_path_list.append(shortest_path_train[index,2])
+    
+    train_shortest_path_list = np.array(train_shortest_path_list)
+    train_shortest_path_list = np.transpose(train_shortest_path_list)
+    X= np.c_[X, train_shortest_path_list]
+    print X.shape
+    print train_shortest_path_list.shape
+
     Y = train[:, 2]
     Y[Y > 0] = 1
     
@@ -253,7 +300,29 @@ def classify(train, zeros, test, mf, K1, K2,
     predictor = select(classifier_info, **kwargs)
     predictor = predictor.fit(X, Y)
 
-    XTest = np.append(sender[test[:, 0]], recv[test[:, 1]], 1)
+    #Testing Data Manipulation
+    sender_blockstates = []
+    for address in test[:,0]:
+        sender_blockstates.append(blockstate[address])
+    receiver_blockstates = []
+    for address in test[:,1]:
+        receiver_blockstates.append(blockstate[address])
+    
+    sender_ids = sender[test[:, 0]]
+    recv_ids = recv[test[:, 1]]
+
+    sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
+    recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
+
+    #Need to find the shortest path for the training set too!
+    test_shortest_path_list = []
+    for index in range(0, shortest_path_test_size):
+        test_shortest_path_list.append(shortest_path_test[index,2])
+    test_shortest_path_list = np.array(test_shortest_path_list)
+    
+    #Change here to include the shortest paths between the sender and receiver
+    XTest = np.append(sender_ids, recv_ids, 1)
+    XTest = np.c_[XTest, test_shortest_path_list]
     
     Yres = predictor.predict(XTest)
 
@@ -282,11 +351,13 @@ def evaluate(test, Yres):
 if __name__ == "__main__":
     train = get_data("txTripletsCounts.txt")
     test = get_data("testTriplets.txt")
+    shortest_path_train = get_data("shortest_path.txt")
+    shortest_path_test = get_data("testing_shortest_path.txt")
 
 
     ### Classify ###
     zeros = get_data("zeros.txt")
-    Yres = classify(train, zeros, test, TSVD, 20, 20, c_dict['QDA'])
+    Yres = classify(train, zeros, shortest_path_train, shortest_path_test, test, TSVD, 20, 20, c_dict['QDA'])
     evaluate(test, Yres)
 
     ### Bare Matrix Factorizaion ###
