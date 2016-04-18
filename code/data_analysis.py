@@ -9,6 +9,7 @@ from sklearn.decomposition import *
 from sklearn.metrics import *
 from scipy.sparse import csr_matrix
 
+from sklearn.cross_validation import StratifiedKFold
 import sklearn.ensemble
 import sklearn.discriminant_analysis
 import sklearn.tree
@@ -240,7 +241,15 @@ def send_vs_receive_stat(X):
 def feature_analysis(train, mf):
     # TODO: create graphs
     (P, Q) = mf(train, 2)
+    Q = Q.T
 
+    plt.scatter(P[:, 0], P[:, 1])
+    plt.savefig("plots/senders_%s.png" % mf.__name__)
+
+    plt.clf()
+
+    plt.scatter(Q[:, 0], Q[:, 1])
+    plt.savefig("plots/receivers_%s.png" % mf.__name__)
     
 
 ###################################
@@ -253,10 +262,11 @@ def select(selector_info, **kwargs):
     s = sel(**kwargs)
     return s
 
-def classify(train, zeros, shortest_path_train, shortest_path_test, test, mf, K1, K2, 
-             classifier_info, **kwargs):
-
-    blockstate = get_block_data()
+def get_classifier_X_Y(train, zeros, test, mf, K1, K2,
+                        shortest_path_train = None, shortest_path_test = None, 
+                        use_blockstate = False):    
+    
+    use_shortest_path = not ((shortest_path_train is None) or (shortest_path_test is None))
 
     (P, Q) = mf(train, max(K1, K2))
     Q = Q.T
@@ -269,112 +279,172 @@ def classify(train, zeros, shortest_path_train, shortest_path_test, test, mf, K1
     zeros = zeros.as_matrix()
     zero_trainsize = zeros.shape[0]
     test = test.as_matrix()
-    shortest_path_train = shortest_path_train.as_matrix()
-    shortest_path_test = shortest_path_test.as_matrix()
-    shortest_path_test_size = shortest_path_test.shape[0]
 
     train = np.concatenate((train, zeros), axis = 0)
-    
     sender_ids = sender[train[:, 0]]
     recv_ids = recv[train[:, 1]]
-    
-    sender_blockstates = []
-    for address in train[:,0]:
-        sender_blockstates.append(blockstate[address])
-    receiver_blockstates = []
-    for address in train[:,1]:
-        receiver_blockstates.append(blockstate[address])
-
-    #sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
-    #recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
-
     X = np.append(sender_ids, recv_ids, 1)
     
-    train_shortest_path_list = []
-    #Iterate through the 1 training set and assign the shortest path to 0
-    for index in range(0, nonzero_trainsize):
-        train_shortest_path_list.append(1)
-    for index in range(0, zero_trainsize):
-        if shortest_path_train[index,2] == -1:
-            train_shortest_path_list.append(10)
-        else:
-            train_shortest_path_list.append(int(shortest_path_train[index,2]))
-    print train_shortest_path_list
-    
-    train_shortest_path_list = np.array(train_shortest_path_list)
-    train_shortest_path_list = np.transpose(train_shortest_path_list)
-    X= np.c_[X, train_shortest_path_list]
-    print X
+    if use_shortest_path:
+        shortest_path_train = shortest_path_train.as_matrix()
+        shortest_path_test = shortest_path_test.as_matrix()
+        shortest_path_test_size = shortest_path_test.shape[0]
 
+        train_shortest_path_list = []
+        #Iterate through the 1 training set and assign the shortest path to 0
+        for index in range(0, nonzero_trainsize):
+            train_shortest_path_list.append(1)
+        for index in range(0, zero_trainsize):
+            if shortest_path_train[index,2] == -1:
+                train_shortest_path_list.append(10)
+            else:
+                train_shortest_path_list.append(int(shortest_path_train[index,2]))
+        # print train_shortest_path_list
+        
+        train_shortest_path_list = np.array(train_shortest_path_list)
+        train_shortest_path_list = np.transpose(train_shortest_path_list)
+        X= np.c_[X, train_shortest_path_list]
+        # print X
+    
+    if use_blockstate:
+        blockstate = get_block_data()
+
+        sender_blockstates = []
+        for address in train[:,0]:
+            sender_blockstates.append(blockstate[address])
+        receiver_blockstates = []
+        for address in train[:,1]:
+            receiver_blockstates.append(blockstate[address])
+
+        #sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
+        #recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
+        
     Y = train[:, 2]
     Y[Y > 0] = 1
     
+    #Testing Data Manipulation
+    sender_ids = sender[test[:, 0]]
+    recv_ids = recv[test[:, 1]]
+
+    if use_blockstate:
+        sender_blockstates = []
+        for address in test[:,0]:
+            sender_blockstates.append(blockstate[address])
+        receiver_blockstates = []
+        for address in test[:,1]:
+            receiver_blockstates.append(blockstate[address])
+        
+        #sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
+        #recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
+    
+    XTest = np.append(sender_ids, recv_ids, 1)
+
+    if use_shortest_path:
+        #Need to find the shortest path for the training set too!
+        test_shortest_path_list = []
+        for index in range(0, shortest_path_test_size):
+            if shortest_path_test[index,2] == -1:
+                test_shortest_path_list.append(10)
+            else:
+                test_shortest_path_list.append(int(shortest_path_test[index,2]))
+        test_shortest_path_list = np.array(test_shortest_path_list)
+        #Change here to include the shortest paths between the sender and receiver
+        XTest = np.c_[XTest, test_shortest_path_list]
+
+    return (X, Y, XTest)
+
+def classify(X, Y, XTest, classifier_info, **kwargs):
     # QDA
     predictor = select(classifier_info, **kwargs)
     predictor = predictor.fit(X, Y)
 
-    #Testing Data Manipulation
-    sender_blockstates = []
-    for address in test[:,0]:
-        sender_blockstates.append(blockstate[address])
-    receiver_blockstates = []
-    for address in test[:,1]:
-        receiver_blockstates.append(blockstate[address])
-    
-    sender_ids = sender[test[:, 0]]
-    recv_ids = recv[test[:, 1]]
-
-    #sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
-    #recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
-
-    #Need to find the shortest path for the training set too!
-    test_shortest_path_list = []
-    for index in range(0, shortest_path_test_size):
-        if shortest_path_test[index,2] == -1:
-            test_shortest_path_list.append(10)
-        else:
-            test_shortest_path_list.append(int(shortest_path_test[index,2]))
-    test_shortest_path_list = np.array(test_shortest_path_list)
-    
-    #Change here to include the shortest paths between the sender and receiver
-    XTest = np.append(sender_ids, recv_ids, 1)
-    XTest = np.c_[XTest, test_shortest_path_list]
-    
     Yres = predictor.predict(XTest)
+    Yprobs = predictor.predict_proba(XTest)[:, 1]
 
-    return Yres
+    return (Yres, Yprobs)
 
 ###################################
 #######      evaluate       #######
 ###################################
 
-def evaluate(test, Yres):
-    YTest = test.as_matrix()[:, 2]
+def metrics_str(metrics):
+    metrics = ["%.2f" % k for k in metrics]
+    return " & ".join(metrics)
 
-    (fpr, tpr, _) = roc_curve(YTest, Yres)
+def evaluate(YTest, Yres, Yprobs):
+    (fpr, tpr, thresholds) = roc_curve(YTest, Yprobs)
     area = auc(fpr, tpr)
     precision_macro = precision_score(YTest, Yres, average="binary")
     recall_macro = recall_score(YTest, Yres, average="binary")
 
-    print area, precision_macro, recall_macro
+    # print area, precision_macro, recall_macro
 
+    zeros = Yres[YTest == 0]
+    ones = Yres[YTest > 0]
+    data = [zeros, ones]
+    plt.violinplot(data)
+    plt.show()
+    
     # plt.plot(fpr, tpr)
     # plt.plot(fpr, fpr)
     # plt.show()
 
+    return area, precision_macro, recall_macro    
 
+def cons_metrics(metrics):
+    res = np.array(metrics)
+    return np.mean(res, axis = 0).tolist()
+
+
+def cross_validate(X, Y, folds, classifier_info, **kwargs):
+    skf = StratifiedKFold(Y, n_folds=folds)
+    metrics = []
+    # scalar = StandardScaler()
+    for train_ind, test_ind in skf:
+        (Yres, Yprobs) = classify(X[train_ind], Y[train_ind], X[test_ind], 
+                    classifier_info, **kwargs)
+        e = evaluate(Y[test_ind], Yres, Yprobs) 
+        metrics.append(e)
+    return cons_metrics(metrics)
 
 if __name__ == "__main__":
     train = get_data("txTripletsCounts.txt")
     test = get_data("testTriplets.txt")
-    # shortest_path_train = get_data("shortest_path.txt")
-    # shortest_path_test = get_data("testing_shortest_path.txt")
 
+    zeros = get_data("zeros.txt")
+    shortest_path_train = get_data("shortest_path.txt")
+    shortest_path_test = get_data("testing_shortest_path.txt")
+
+
+    ### Analysis ###
+    # feature_analysis(train, PF)
+
+    ### Cross Validate ###
+
+    # for K in [5, 10, 15, 20, 25]:
+    #     X, Y, _ = get_classifier_X_Y(train, zeros, test, NNegMF, K, K,  
+    #                                         shortest_path_train = None, shortest_path_test = None,
+    #                                         use_blockstate = True)
+
+    #     print K, metrics_str(cross_validate(X, Y, 10, c_dict['QDA']))
+
+    # for K1 in [10, 20]:
+    #     for K2 in [3, 5, 10]:
+    #         X, Y, _ = get_classifier_X_Y(train, zeros, test, NNegMF, K1, K2,  
+    #                                             shortest_path_train = None, shortest_path_test = None,
+    #                                             use_blockstate = True)
+
+    #         print K1, K2, metrics_str(cross_validate(X, Y, 5, c_dict['QDA']))
 
     ### Classify ###
-    # zeros = get_data("zeros.txt")
-    # Yres = classify(train, zeros, shortest_path_train, shortest_path_test, test, TSVD, 20, 20, c_dict['QDA'])
-    # evaluate(test, Yres)
+
+    X, Y, XTest = get_classifier_X_Y(train, zeros, test, NNegMF, 10, 10,  
+                                        shortest_path_train = None, shortest_path_test = None,
+                                        use_blockstate = True)
+
+    (Yres, Yprobs) = classify(X, Y, XTest, c_dict['QDA'])
+    YTest = test.as_matrix()[:, 2]
+    print metrics_str(evaluate(YTest, Yres, Yprobs))
 
     ### Bare Matrix Factorizaion ###
 
@@ -382,8 +452,9 @@ if __name__ == "__main__":
     # P, Q = NNegMF(train, 6)
     # ProbMF(train, 2)
     # P, Q = PF(train, 2)
-    P, Q = HPF(train, 2)
+    # P, Q = HPF(train, 2)
 
-    Yres = MF_predict(P, Q, test, threshold = 0.00001)
-    evaluate(test, Yres)
+    # Yres = MF_predict(P, Q, test, threshold = 0.00001)
+    # YTest = test.as_matrix()[:, 2]
+    # evaluate(YTest, Yres)
     

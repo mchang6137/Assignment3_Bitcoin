@@ -1,6 +1,3 @@
-about to load the graph
-graph has been loaded
-only find the shortest paths between sender/receiver pairs that are in the training set
 246564 437143 3
 117352 264017 2
 398479 119986 3
