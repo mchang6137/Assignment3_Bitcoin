@@ -140,13 +140,18 @@ def PF(train, K):
 
     res_temp = "./n%d-m%d-k%d-batch-vb/%s"
 
-    P = np.loadtxt(res_temp % (n, m, K, "byusers.tsv"))[:, 1:]
-    P = P[np.argsort(P[:,0])][:, 1:]
+    P = np.ndarray(shape = (n + 1, K))
+    P_PF = np.loadtxt(res_temp % (n, m, K, "byusers.tsv"))[:, 1:]
+    P[P_PF[:, 0].astype(int)] = P_PF[:, 1:]
+    P = P[1:]
+    
 
-    Q = np.loadtxt(res_temp % (n, m, K, "byitems.tsv"))[:, 1:]
-    Q = Q[np.argsort(Q[:,0])][:, 1:]
+    Q = np.ndarray(shape = (m + 1, K))
+    Q_PF = np.loadtxt(res_temp % (n, m, K, "byitems.tsv"))[:, 1:]
+    Q[Q_PF[:, 0].astype(int)] = Q_PF[:, 1:]
+    Q = Q[1:]
 
-    return (P, Q)
+    return (P, Q.T)
 
 def HPF(train, K):
     # n = train['sender'].max() + 1
@@ -158,13 +163,18 @@ def HPF(train, K):
 
     res_temp = "./n%d-m%d-k%d-batch-hier-vb/%s" % (n, m, K)
 
-    P = np.loadtxt(res_temp % "byusers.tsv")[:, 1:]
-    P = P[np.argsort(P[:,0])][:, 1:]
+    P = np.ndarray(shape = (n + 1, K))
+    P_PF = np.loadtxt(res_temp % (n, m, K, "byusers.tsv"))[:, 1:]
+    P[P_PF[:, 0].astype(int)] = P_PF[:, 1:]
+    P = P[1:]
+    
 
-    Q = np.loadtxt(res_temp % "byitems.tsv")[:, 1:]
-    Q = Q[np.argsort(Q[:,0])][:, 1:]
+    Q = np.ndarray(shape = (m + 1, K))
+    Q_PF = np.loadtxt(res_temp % (n, m, K, "byitems.tsv"))[:, 1:]
+    Q[Q_PF[:, 0].astype(int)] = Q_PF[:, 1:]
+    Q = Q[1:]
 
-    return (P, Q)
+    return (P, Q.T)
 
 ###################################
 #######      analysis       #######
@@ -351,14 +361,14 @@ def evaluate(test, Yres):
 if __name__ == "__main__":
     train = get_data("txTripletsCounts.txt")
     test = get_data("testTriplets.txt")
-    shortest_path_train = get_data("shortest_path.txt")
-    shortest_path_test = get_data("testing_shortest_path.txt")
+    # shortest_path_train = get_data("shortest_path.txt")
+    # shortest_path_test = get_data("testing_shortest_path.txt")
 
 
     ### Classify ###
-    zeros = get_data("zeros.txt")
-    Yres = classify(train, zeros, shortest_path_train, shortest_path_test, test, TSVD, 20, 20, c_dict['QDA'])
-    evaluate(test, Yres)
+    # zeros = get_data("zeros.txt")
+    # Yres = classify(train, zeros, shortest_path_train, shortest_path_test, test, TSVD, 20, 20, c_dict['QDA'])
+    # evaluate(test, Yres)
 
     ### Bare Matrix Factorizaion ###
 
@@ -368,6 +378,6 @@ if __name__ == "__main__":
     # P, Q = PF(train, 2)
     # P, Q = HPF(train, 2)
 
-    # Yres = MF_predict(P, Q, test, threshold = 0.00001)
-    # evaluate(test, Yres)
+    Yres = MF_predict(P, Q, test, threshold = 0.00001)
+    evaluate(test, Yres)
     
