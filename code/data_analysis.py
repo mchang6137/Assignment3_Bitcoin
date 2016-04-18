@@ -275,23 +275,26 @@ def classify(train, zeros, shortest_path_train, shortest_path_test, test, mf, K1
     for address in train[:,1]:
         receiver_blockstates.append(blockstate[address])
 
-    sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
-    recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
+    #sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
+    #recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
 
     X = np.append(sender_ids, recv_ids, 1)
     
     train_shortest_path_list = []
     #Iterate through the 1 training set and assign the shortest path to 0
     for index in range(0, nonzero_trainsize):
-        train_shortest_path_list.append(0)
+        train_shortest_path_list.append(1)
     for index in range(0, zero_trainsize):
-        train_shortest_path_list.append(shortest_path_train[index,2])
+        if shortest_path_train[index,2] == -1:
+            train_shortest_path_list.append(10)
+        else:
+            train_shortest_path_list.append(int(shortest_path_train[index,2]))
+    print train_shortest_path_list
     
     train_shortest_path_list = np.array(train_shortest_path_list)
     train_shortest_path_list = np.transpose(train_shortest_path_list)
     X= np.c_[X, train_shortest_path_list]
-    print X.shape
-    print train_shortest_path_list.shape
+    print X
 
     Y = train[:, 2]
     Y[Y > 0] = 1
@@ -311,13 +314,16 @@ def classify(train, zeros, shortest_path_train, shortest_path_test, test, mf, K1
     sender_ids = sender[test[:, 0]]
     recv_ids = recv[test[:, 1]]
 
-    sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
-    recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
+    #sender_ids = np.c_[sender_ids, np.array(sender_blockstates)]
+    #recv_ids = np.c_[recv_ids, np.array(receiver_blockstates)]
 
     #Need to find the shortest path for the training set too!
     test_shortest_path_list = []
     for index in range(0, shortest_path_test_size):
-        test_shortest_path_list.append(shortest_path_test[index,2])
+        if shortest_path_test[index,2] == -1:
+            test_shortest_path_list.append(10)
+        else:
+            test_shortest_path_list.append(int(shortest_path_test[index,2]))
     test_shortest_path_list = np.array(test_shortest_path_list)
     
     #Change here to include the shortest paths between the sender and receiver
