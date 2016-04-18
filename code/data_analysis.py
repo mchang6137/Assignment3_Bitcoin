@@ -154,14 +154,14 @@ def PF(train, K):
     return (P, Q.T)
 
 def HPF(train, K):
-    # n = train['sender'].max() + 1
-    # m = train['receiver'].max() + 1
+    n = train['sender'].max() + 1
+    m = train['receiver'].max() + 1
 
     # call('hgaprec -hier -m %d -n %d -k %d -dir %s/Pdata' % (m, n, K, DATA_PATH), shell = True)
 
     # hgaprec -hier -n 444075 -m 444065 -k 2 -dir ../data/Pdata
 
-    res_temp = "./n%d-m%d-k%d-batch-hier-vb/%s" % (n, m, K)
+    res_temp = "./n%d-m%d-k%d-batch-hier-vb/%s" 
 
     P = np.ndarray(shape = (n + 1, K))
     P_PF = np.loadtxt(res_temp % (n, m, K, "byusers.tsv"))[:, 1:]
@@ -382,7 +382,7 @@ if __name__ == "__main__":
     # P, Q = NNegMF(train, 6)
     # ProbMF(train, 2)
     # P, Q = PF(train, 2)
-    # P, Q = HPF(train, 2)
+    P, Q = HPF(train, 2)
 
     Yres = MF_predict(P, Q, test, threshold = 0.00001)
     evaluate(test, Yres)
