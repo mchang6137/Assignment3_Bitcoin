@@ -9,15 +9,18 @@ from sklearn.decomposition import *
 from sklearn.metrics import *
 from scipy.sparse import csr_matrix
 
-from sklearn.cross_validation import StratifiedKFold
+from sklearn.cross_validation import StratifiedKFold, train_test_split
 import sklearn.ensemble
 import sklearn.discriminant_analysis
 import sklearn.tree
+import sklearn.linear_model
+import sklearn.svm
 
-
-c_dict = { 'random_forest' : (sklearn.ensemble, "RandomForestClassifier"),
+c_dict = { 'RF' : (sklearn.ensemble, "RandomForestClassifier"),
            'QDA' : (sklearn.discriminant_analysis, "QuadraticDiscriminantAnalysis"),
            'DT' : (sklearn.tree, "DecisionTreeClassifier"),
+           'LREG' : (sklearn.linear_model, "LogisticRegression"),
+           'LSVM' : (sklearn.svm, "LinearSVC"),
          }
 
 DATA_PATH = "../data/%s"
@@ -75,6 +78,11 @@ def sample(X, frac):
     inds = np.array(random.sample(range(length), cnt))
     return X[inds]
 
+def sample_cnt(X, cnt):
+    length = X.shape[0]
+    inds = np.array(random.sample(range(length), cnt))
+    return X[inds]
+
 ###################################
 #######         MF          #######
 ###################################
@@ -82,15 +90,17 @@ def sample(X, frac):
 def MF_predict(P, Q, test, threshold = None):
     Yres = np.array([np.dot( P[row['sender'],:], Q[:,row['receiver']])  for index,row in test.iterrows()])
 
+    OrgYres = Yres
     if not threshold is None:
         Yres[Yres > threshold] = 1
         Yres[Yres < 1] = 0
 
-    return Yres
+    return (Yres, OrgYres)
 
 # 0.000001
-def TSVD(train, K):
-    shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
+def TSVD(train, K, shape = None):
+    if shape is None:
+        shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
 
     train_csr = csr_matrix((train['transaction'], (train['sender'], train['receiver'])),
                            shape = shape)
@@ -101,8 +111,9 @@ def TSVD(train, K):
     return (P, Q)
 
 # 0.00001
-def NNegMF(train, K):
-    shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
+def NNegMF(train, K, shape = None):
+    if shape is None:
+        shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
 
     train_csr = csr_matrix((train['transaction'], (train['sender'], train['receiver'])),
                            shape = shape)
@@ -113,8 +124,9 @@ def NNegMF(train, K):
 
     return (P, Q)
 
-def ProbMF(train, K, frac = 0.5):
-    shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
+def ProbMF(train, K, shape = None, frac = 0.5):
+    if shape is None:
+        shape = (train['sender'].max() + 1, train['receiver'].max() + 1)
 
     train = sample(train.as_matrix(), frac)
     
@@ -131,9 +143,13 @@ def ProbMF(train, K, frac = 0.5):
 
     # evaluate(YTest, Yres)
 
-def PF(train, K):
-    n = train['sender'].max() + 1
-    m = train['receiver'].max() + 1
+def PF(train, K, shape = None):
+    if shape is None:
+        n = train['sender'].max() + 1
+        m = train['receiver'].max() + 1
+    else:
+        n = shape[0]
+        m = shape[1]
 
     # call('hgaprec -n %d -m %d -k %d -dir %s/Pdata' % (n, m, K, DATA_PATH), shell = True)
 
@@ -154,9 +170,13 @@ def PF(train, K):
 
     return (P, Q.T)
 
-def HPF(train, K):
-    n = train['sender'].max() + 1
-    m = train['receiver'].max() + 1
+def HPF(train, K, shape = None):
+    if shape is None:
+        n = train['sender'].max() + 1
+        m = train['receiver'].max() + 1
+    else:
+        n = shape[0]
+        m = shape[1]
 
     # call('hgaprec -hier -m %d -n %d -k %d -dir %s/Pdata' % (m, n, K, DATA_PATH), shell = True)
 
@@ -360,6 +380,7 @@ def classify(X, Y, XTest, classifier_info, **kwargs):
 
     Yres = predictor.predict(XTest)
     Yprobs = predictor.predict_proba(XTest)[:, 1]
+    # Yprobs = Yres
 
     return (Yres, Yprobs)
 
@@ -377,17 +398,17 @@ def evaluate(YTest, Yres, Yprobs):
     precision_macro = precision_score(YTest, Yres, average="binary")
     recall_macro = recall_score(YTest, Yres, average="binary")
 
-    # print area, precision_macro, recall_macro
-
-    zeros = Yres[YTest == 0]
-    ones = Yres[YTest > 0]
-    data = [zeros, ones]
-    plt.violinplot(data)
-    plt.show()
-    
-    # plt.plot(fpr, tpr)
-    # plt.plot(fpr, fpr)
+    # zeros = Yres[YTest == 0]
+    # ones = Yres[YTest > 0]
+    # data = [zeros, ones]
+    # plt.violinplot(data)
     # plt.show()
+    
+    plt.plot(fpr, tpr)
+    plt.plot(fpr, fpr)
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.show()
 
     return area, precision_macro, recall_macro    
 
@@ -407,6 +428,32 @@ def cross_validate(X, Y, folds, classifier_info, **kwargs):
         metrics.append(e)
     return cons_metrics(metrics)
 
+def mf_cross_validate(train, zeros, folds, mf, K, threshold, shape):
+    test_frac = 0.0001
+    zeros = zeros.as_matrix()
+    metrics = []
+
+    for i in range(folds):
+        train_set, test_set = train_test_split(train, test_size = test_frac)
+        P, Q = mf(train_set, K, shape = shape)
+
+        test_set = test_set.as_matrix()
+        test_length = test_set.shape[0]
+        zero_test = sample_cnt(zeros, test_length)
+        test_set = np.concatenate((test_set, zero_test), axis = 0)
+        test_frame = pd.DataFrame(test_set, columns = ['sender', 'receiver', 'transaction'])    
+
+        (Yres, Yprobs) = MF_predict(P, Q, test_frame, threshold = threshold)
+
+        YTest = test_set[:, 2]
+        YTest[YTest > 1] = 1
+        
+
+        e = evaluate(YTest, Yres, Yprobs) 
+        metrics.append(e)    
+
+    return cons_metrics(metrics)
+
 if __name__ == "__main__":
     train = get_data("txTripletsCounts.txt")
     test = get_data("testTriplets.txt")
@@ -417,24 +464,24 @@ if __name__ == "__main__":
 
 
     ### Analysis ###
-    # feature_analysis(train, PF)
+    feature_analysis(train, PF)
 
     ### Cross Validate ###
 
-    # for K in [5, 10, 15, 20, 25]:
-    #     X, Y, _ = get_classifier_X_Y(train, zeros, test, NNegMF, K, K,  
-    #                                         shortest_path_train = None, shortest_path_test = None,
-    #                                         use_blockstate = True)
+    for K in [5, 10, 15, 20, 25]:
+        X, Y, _ = get_classifier_X_Y(train, zeros, test, NNegMF, K, K,  
+                                            shortest_path_train = None, shortest_path_test = None,
+                                            use_blockstate = True)
 
-    #     print K, metrics_str(cross_validate(X, Y, 10, c_dict['QDA']))
+        print K, metrics_str(cross_validate(X, Y, 10, c_dict['QDA']))
 
-    # for K1 in [10, 20]:
-    #     for K2 in [3, 5, 10]:
-    #         X, Y, _ = get_classifier_X_Y(train, zeros, test, NNegMF, K1, K2,  
-    #                                             shortest_path_train = None, shortest_path_test = None,
-    #                                             use_blockstate = True)
+    for K1 in [10, 20]:
+        for K2 in [3, 5, 10]:
+            X, Y, _ = get_classifier_X_Y(train, zeros, test, NNegMF, K1, K2,  
+                                                shortest_path_train = None, shortest_path_test = None,
+                                                use_blockstate = True)
 
-    #         print K1, K2, metrics_str(cross_validate(X, Y, 5, c_dict['QDA']))
+            print K1, K2, metrics_str(cross_validate(X, Y, 5, c_dict['QDA']))
 
     ### Classify ###
 
@@ -446,15 +493,33 @@ if __name__ == "__main__":
     YTest = test.as_matrix()[:, 2]
     print metrics_str(evaluate(YTest, Yres, Yprobs))
 
+    ### Cross Validate ###
+    shape = (train['sender'].max() + 1, train['receiver'].max() + 1) 
+
+    for K in [3, 5, 10, 20]:
+        print K, metrics_str(mf_cross_validate(train, zeros, 5, TSVD, K, 0.0001, shape))    
+
+    for T in [0.01, 0.001, 0.0001, 0.00001, 0.000001]:
+        print T, metrics_str(mf_cross_validate(train, zeros, 5, TSVD, 5, T, shape))
+
+    for K in [3, 5, 10, 20]:
+        print K, metrics_str(mf_cross_validate(train, zeros, 5, NNegMF, K, 0.0001, shape))    
+
+    for T in [0.01, 0.001, 0.0001, 0.00001, 0.000001]:
+        print T, metrics_str(mf_cross_validate(train, zeros, 5, NNegMF, 5, T, shape))    
+
+    for T in [0.01, 0.001, 0.0001, 0.00001, 0.000001]:
+        print T, metrics_str(mf_cross_validate(train, zeros, 5, HPF, 2, T, shape))    
+
     ### Bare Matrix Factorizaion ###
 
-    # P, Q = TSVD(train, 4)
-    # P, Q = NNegMF(train, 6)
+    P, Q = TSVD(train, 5) #0.0001
+    # P, Q = NNegMF(train, 5) #0.00001
     # ProbMF(train, 2)
     # P, Q = PF(train, 2)
     # P, Q = HPF(train, 2)
 
-    # Yres = MF_predict(P, Q, test, threshold = 0.00001)
-    # YTest = test.as_matrix()[:, 2]
-    # evaluate(YTest, Yres)
+    (Yres, Yprobs) = MF_predict(P, Q, test, threshold = 0.001)
+    YTest = test.as_matrix()[:, 2]
+    print metrics_str(evaluate(YTest, Yres, Yprobs))
     
